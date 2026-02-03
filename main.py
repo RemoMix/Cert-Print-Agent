@@ -54,7 +54,7 @@ class CertPrintOrchestrator:
     
     def setup_directories(self):
         """Create all required directories"""
-        base_dir = self.config.get('paths', {}).get('base_dir', 'GetCertAgent')
+        base_dir = self.config.get('paths', {}).get('base_dir', 'Cert-Print-Agent')
         paths = self.config.get('paths', {})
         
         dirs = [
