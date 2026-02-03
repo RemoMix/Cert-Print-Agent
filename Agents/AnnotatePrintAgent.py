@@ -1,23 +1,23 @@
 import os
 import time
 import shutil
-import tempfile
 from datetime import datetime
 import yaml
-import fitz  # PyMuPDF
+import fitz
 from PIL import Image, ImageDraw, ImageFont
+import io
 import logging
+import re
 
-# For Windows printing
 try:
     import win32print
     import win32api
     WIN32_AVAILABLE = True
 except ImportError:
     WIN32_AVAILABLE = False
-    logging.warning("win32print not available")
 
 logger = logging.getLogger('CertPrintAgent')
+
 
 class AnnotatePrintAgent:
     def __init__(self, config_path="config.yaml"):
@@ -25,17 +25,9 @@ class AnnotatePrintAgent:
         self.printer_name = self.config.get('printing', {}).get('printer_name', '')
         self.retry_attempts = self.config.get('printing', {}).get('retry_attempts', 3)
         self.retry_delay = self.config.get('printing', {}).get('retry_delay_seconds', 10)
-        self.annotation_config = self.config.get('printing', {}).get('annotation', {
-            'position_x': 50,
-            'position_y': 750,
-            'font_size': 11
-        })
-        
-        # Setup paths
         self.setup_paths()
         
     def load_config(self, config_path):
-        """Load configuration file"""
         try:
             with open(config_path, 'r', encoding='utf-8') as f:
                 return yaml.safe_load(f)
@@ -44,110 +36,134 @@ class AnnotatePrintAgent:
             return {}
     
     def setup_paths(self):
-        """Setup all required directories"""
-        base_dir = self.config.get('paths', {}).get('base_dir', 'Cert-Print-Agent')
+        base_dir = self.config.get('paths', {}).get('base_dir', '.')
         paths_config = self.config.get('paths', {})
         
-        # New structure paths
         self.source_cert_dir = os.path.join(base_dir, paths_config.get('source_cert', 'GetCertAgent/Source_Cert'))
         self.annotated_dir = os.path.join(base_dir, paths_config.get('annotated_cert', 'GetCertAgent/Annotated_Certificates'))
         self.printed_dir = os.path.join(base_dir, paths_config.get('printed_cert', 'GetCertAgent/Printed_Annotated_Cert'))
         self.processed_dir = os.path.join(base_dir, paths_config.get('processed', 'GetCertAgent/Processed'))
+        self.cert_inbox = os.path.join(base_dir, paths_config.get('cert_inbox', 'GetCertAgent/Cert_Inbox'))
         
-        # Create directories
         for d in [self.source_cert_dir, self.annotated_dir, self.printed_dir, self.processed_dir]:
             os.makedirs(d, exist_ok=True)
-            logger.debug(f"Directory ready: {d}")
     
-    def is_printer_available(self):
-        """Check if printer is available"""
-        if not WIN32_AVAILABLE:
-            return False
+    def get_font(self):
+        """الحصول على خط مناسب"""
+        font_paths = [
+            "C:/Windows/Fonts/arial.ttf",
+            "C:/Windows/Fonts/tahoma.ttf",
+            "arial.ttf",
+        ]
+        
+        for font_path in font_paths:
+            try:
+                if os.path.exists(font_path):
+                    return ImageFont.truetype(font_path, 16)
+            except:
+                continue
+        
+        return ImageFont.load_default()
+    
+    def parse_annotation(self, text):
+        """تقسيم النص لعربي وإنجليزي"""
+        # مثال: "ماهر سعد lot 2601"
+        # نبحث عن "lot" ونفصل
+        match = re.search(r'^(.+?)\s+lot\s+(\d+)$', text, re.IGNORECASE)
+        if match:
+            arabic_name = match.group(1).strip()  # ماهر سعد
+            number = match.group(2).strip()       # 2601
+            return arabic_name, number
+        
+        # لو مفيش lot، نرجع النص كله عربي
+        return text, ""
+    
+    def create_text_image(self, text, width=220, height=40):
+        """إنشاء صورة فيها النص - العربي من اليمين"""
+        img = Image.new('RGB', (width, height), color='white')
+        draw = ImageDraw.Draw(img)
+        
+        # رسم حدود
+        draw.rectangle([0, 0, width-1, height-1], outline='black', width=2)
+        
+        font = self.get_font()
+        
+        # تقسيم النص
+        arabic_name, number = self.parse_annotation(text)
+        
+        if number:
+            # عندنا "lot XXXX" - نكتبهم منفصلين
+            # الجزء العربي (نكتبه من اليمين للشمال)
+            arabic_text = arabic_name
+            english_text = f"lot {number}"
             
-        try:
-            printers = [printer[2] for printer in win32print.EnumPrinters(2)]
+            # نرسم العربي على اليمين
+            bbox_ar = draw.textbbox((0, 0), arabic_text, font=font)
+            ar_width = bbox_ar[2] - bbox_ar[0]
             
-            if not self.printer_name:
-                logger.warning("No printer configured")
-                return False
+            # نرسم الإنجليزي على الشمال
+            bbox_en = draw.textbbox((0, 0), english_text, font=font)
+            en_width = bbox_en[2] - bbox_en[0]
             
-            if self.printer_name in printers:
-                logger.info(f"Printer available: {self.printer_name}")
-                return True
-            else:
-                default_printer = win32print.GetDefaultPrinter()
-                if default_printer:
-                    logger.info(f"Using default printer: {default_printer}")
-                    self.printer_name = default_printer
-                    return True
-                
-                logger.warning(f"Printer not found: {self.printer_name}")
-                return False
-                
-        except Exception as e:
-            logger.error(f"Error checking printer: {e}")
-            return False
+            # حساب المواقع
+            total_width = ar_width + en_width + 10  # مسافة بينهم
+            start_x = (width - total_width) // 2
+            
+            y = (height - (bbox_ar[3] - bbox_ar[1])) // 2 - 2
+            
+            # رسم العربي (على اليمين في الصورة = آخر حاجة نرسمها)
+            draw.text((start_x + en_width + 10, y), arabic_text, fill='black', font=font)
+            
+            # رسم الإنجليزي (على الشمال)
+            draw.text((start_x, y), english_text, fill='black', font=font)
+        else:
+            # كله عربي - في المنتصف
+            bbox = draw.textbbox((0, 0), text, font=font)
+            x = (width - (bbox[2] - bbox[0])) // 2
+            y = (height - (bbox[3] - bbox[1])) // 2 - 2
+            draw.text((x, y), text, fill='black', font=font)
+        
+        return img
     
     def annotate_pdf(self, pdf_path, annotation_text, output_dir=None):
-        """Add annotation to PDF and save to annotated folder"""
+        """كتابة النص على PDF"""
         try:
             logger.info(f"Annotating: {os.path.basename(pdf_path)}")
             logger.info(f"Text: {annotation_text}")
             
-            # Determine output path
             if output_dir is None:
                 output_dir = self.annotated_dir
             
             filename = os.path.basename(pdf_path)
             base_name, ext = os.path.splitext(filename)
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            output_filename = f"{base_name}_{timestamp}_annotated{ext}"
-            output_path = os.path.join(output_dir, output_filename)
+            output_path = os.path.join(output_dir, f"{base_name}_{timestamp}_annotated{ext}")
             
-            # Open PDF
+            # فتح PDF
             doc = fitz.open(pdf_path)
             page = doc[0]
             
+            # إنشاء صورة النص
+            text_img = self.create_text_image(annotation_text, width=220, height=40)
+            
+            # حفظ الصورة مؤقتاً
+            img_bytes = io.BytesIO()
+            text_img.save(img_bytes, format='PNG')
+            img_bytes.seek(0)
+            
+            # وضع الصورة على PDF (أعلى يمين)
             page_width = page.rect.width
-            page_height = page.rect.height
+            margin = 20
+            box_width = 220
+            box_height = 40
             
-            # Calculate position (bottom of page with margin)
-            margin = 50
-            y_position = page_height - margin
+            x_pos = page_width - box_width - margin
+            y_pos = margin
             
-            # Create text box
-            rect = fitz.Rect(
-                self.annotation_config.get('position_x', margin),
-                y_position - 25,
-                page_width - margin,
-                y_position + 5
-            )
+            rect = fitz.Rect(x_pos, y_pos, x_pos + box_width, y_pos + box_height)
+            page.insert_image(rect, stream=img_bytes.read())
             
-            # Draw white background
-            page.draw_rect(rect, color=(1, 1, 1), fill=(1, 1, 1))
-            
-            # Add text with fallback methods
-            try:
-                page.insert_textbox(
-                    rect,
-                    annotation_text,
-                    fontsize=self.annotation_config.get('font_size', 11),
-                    color=(0, 0, 0),
-                    align=0
-                )
-            except Exception as e:
-                logger.warning(f"Textbox failed, trying freetext: {e}")
-                annot = page.add_freetext_annot(
-                    rect,
-                    annotation_text,
-                    fontsize=self.annotation_config.get('font_size', 11),
-                    text_color=(0, 0, 0),
-                    fill_color=(1, 1, 1),
-                    border_color=(0, 0, 0)
-                )
-                annot.update()
-            
-            # Save annotated PDF
+            # حفظ
             doc.save(output_path)
             doc.close()
             
@@ -158,160 +174,99 @@ class AnnotatePrintAgent:
             logger.error(f"Error annotating PDF: {e}")
             return None
     
-    def print_pdf(self, pdf_path, retry=0):
-        """Print PDF file"""
+    def is_printer_available(self):
         if not WIN32_AVAILABLE:
-            logger.error("Printing not available")
             return False
-        
         try:
-            logger.info(f"Printing (attempt {retry + 1}): {os.path.basename(pdf_path)}")
-            
-            result = win32api.ShellExecute(
-                0,
-                "print",
-                pdf_path,
-                f'/d:"{self.printer_name}"',
-                ".",
-                0
-            )
-            
-            if result > 32:
-                logger.info("✓ Print job sent")
-                time.sleep(2)
+            printers = [printer[2] for printer in win32print.EnumPrinters(2)]
+            if self.printer_name in printers:
                 return True
-            else:
-                logger.error(f"Print failed with code: {result}")
-                return False
-                
-        except Exception as e:
-            logger.error(f"Error printing: {e}")
+            default = win32print.GetDefaultPrinter()
+            if default:
+                self.printer_name = default
+                return True
+            return False
+        except:
+            return False
+    
+    def print_pdf(self, pdf_path, retry=0):
+        if not WIN32_AVAILABLE:
+            return False
+        try:
+            result = win32api.ShellExecute(0, "print", pdf_path, f'/d:"{self.printer_name}"', ".", 0)
+            return result > 32
+        except:
             return False
     
     def print_with_retry(self, pdf_path):
-        """Print with retry logic"""
         for attempt in range(self.retry_attempts):
             if self.print_pdf(pdf_path, attempt):
                 return True
-            
-            if attempt < self.retry_attempts - 1:
-                logger.info(f"Waiting {self.retry_delay}s before retry...")
-                time.sleep(self.retry_delay)
-        
-        logger.error(f"Failed after {self.retry_attempts} attempts")
+            time.sleep(self.retry_delay)
         return False
     
-    def organize_files(self, original_path, annotated_path, printed_success):
-        """Organize files into appropriate folders"""
-        try:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = os.path.basename(original_path)
-            base_name, ext = os.path.splitext(filename)
-            
-            # 1. Move original to Source_Cert
-            source_filename = f"{base_name}_{timestamp}{ext}"
-            source_path = os.path.join(self.source_cert_dir, source_filename)
-            shutil.move(original_path, source_path)
-            logger.info(f"✓ Original moved to Source_Cert: {source_filename}")
-            
-            # 2. If printed successfully, move annotated to Printed_Annotated_Cert
-            if printed_success and annotated_path and os.path.exists(annotated_path):
-                printed_filename = f"{base_name}_{timestamp}_printed{ext}"
-                printed_dest = os.path.join(self.printed_dir, printed_filename)
-                shutil.move(annotated_path, printed_dest)
-                logger.info(f"✓ Printed copy saved: {printed_filename}")
-                return printed_dest
-            
-            # 3. If not printed, keep in Annotated_Certificates
-            elif annotated_path and os.path.exists(annotated_path):
-                logger.info(f"✓ Annotated copy available: {os.path.basename(annotated_path)}")
-                return annotated_path
-            
-            return None
-            
-        except Exception as e:
-            logger.error(f"Error organizing files: {e}")
-            return None
+    def find_pdf_file(self, filename):
+        for path in [self.cert_inbox, self.source_cert_dir, '.']:
+            full = os.path.join(path, filename)
+            if os.path.exists(full):
+                return full
+        return None
     
     def process_certificate(self, erp_result, original_pdf_path):
-        """Process single certificate"""
         try:
             cert_number = erp_result.get('cert_number', 'UNKNOWN')
             annotation_text = erp_result.get('annotation_text', '')
             
-            logger.info(f"\\nProcessing: {cert_number}")
+            logger.info(f"Processing: {cert_number}")
             
-            if not os.path.exists(original_pdf_path):
-                logger.error(f"File not found: {original_pdf_path}")
+            pdf_path = self.find_pdf_file(os.path.basename(original_pdf_path))
+            if not pdf_path:
+                logger.error(f"PDF not found")
                 return False
             
-            # Step 1: Annotate
-            annotated_path = self.annotate_pdf(original_pdf_path, annotation_text)
-            if not annotated_path:
-                logger.error("Annotation failed")
+            annotated = self.annotate_pdf(pdf_path, annotation_text)
+            if not annotated:
                 return False
             
-            # Step 2: Print if available
-            print_success = False
+            printed = False
             if self.is_printer_available():
-                print_success = self.print_with_retry(annotated_path)
-            else:
-                logger.warning("Printer not available, saving annotated only")
+                printed = self.print_with_retry(annotated)
             
-            # Step 3: Organize files
-            final_path = self.organize_files(original_pdf_path, annotated_path, print_success)
+            # نقل الملفات
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            new_name = f"{os.path.splitext(os.path.basename(pdf_path))[0]}_{timestamp}.pdf"
+            shutil.move(pdf_path, os.path.join(self.source_cert_dir, new_name))
             
-            result_status = "printed" if print_success else "annotated"
-            logger.info(f"✓ Completed: {result_status.upper()}")
+            if printed:
+                printed_name = f"{os.path.splitext(os.path.basename(pdf_path))[0]}_{timestamp}_printed.pdf"
+                shutil.move(annotated, os.path.join(self.printed_dir, printed_name))
             
-            return print_success
+            return printed
             
         except Exception as e:
-            logger.error(f"Error processing certificate: {e}")
+            logger.error(f"Error: {e}")
             return False
     
     def process_all(self, erp_results):
-        """Process all ERP results"""
-        logger.info(f"\\nProcessing {len(erp_results)} certificate(s)")
+        logger.info(f"Processing {len(erp_results)} certificates")
+        results = {'total': len(erp_results), 'printed': 0, 'annotated': 0, 'failed': 0}
         
-        results = {
-            'total': len(erp_results),
-            'printed': 0,
-            'annotated_only': 0,
-            'failed': 0
-        }
-        
-        for erp_result in erp_results:
-            original_path = erp_result.get('file_path', '')
-            
-            success = self.process_certificate(erp_result, original_path)
-            
+        for erp in erp_results:
+            success = self.process_certificate(erp, erp.get('file_path', ''))
             if success:
                 results['printed'] += 1
-            elif os.path.exists(erp_result.get('file_path', '')) == False:
-                # File was processed but maybe not printed
-                results['annotated_only'] += 1
             else:
-                results['failed'] += 1
-        
-        logger.info(f"\\nSummary:")
-        logger.info(f"  Total: {results['total']}")
-        logger.info(f"  Printed: {results['printed']}")
-        logger.info(f"  Annotated only: {results['annotated_only']}")
-        logger.info(f"  Failed: {results['failed']}")
+                results['annotated'] += 1
         
         return results
     
     def run(self, erp_results=None):
-        """Run the agent"""
-        logger.info("Starting AnnotatePrintAgent...")
-        
         if not erp_results:
-            logger.info("No results to process")
             return None
-        
         return self.process_all(erp_results)
+
 
 def annotate_and_print(erp_results, config_path="config.yaml"):
     agent = AnnotatePrintAgent(config_path)
     return agent.run(erp_results)
+
