@@ -1,12 +1,13 @@
 
-# Fix ExtractLotAgent with better regex patterns
+# Create simplified version that directly searches for lot number
 import os
 import re
 import pytesseract
 from pdf2image import convert_from_path
-from PIL import Image, ImageEnhance, ImageFilter
+from PIL import Image, ImageEnhance
 import yaml
 from datetime import datetime
+from pathlib import Path
 import logging
 
 try:
@@ -23,7 +24,6 @@ class ExtractLotAgent:
         self.config = self.load_config(config_path)
         self.setup_tesseract()
         self.setup_poppler()
-        self.lot_patterns = self.setup_lot_patterns()
         
     def load_config(self, config_path):
         try:
@@ -56,66 +56,24 @@ class ExtractLotAgent:
             logger.error(f"Error setting up Poppler: {e}")
             self.poppler_path = None
     
-    def setup_lot_patterns(self):
-        """Enhanced lot number patterns - FIXED"""
-        patterns = [
-            # Pattern 1: "Lot Number : 139928" (most common)
-            r'Lot\\s*Number\\s*[:：]?\\s*(\\d{5,7})\\b',
-            
-            # Pattern 2: "Lot: 139928" or "Lot:139928"
-            r'Lot\\s*[:：]\\s*(\\d{5,7})\\b',
-            
-            # Pattern 3: "Lot No: 139928" or "Lot No.: 139928"
-            r'Lot\\s*No\\.?\\s*[:：]?\\s*(\\d{5,7})\\b',
-            
-            # Pattern 4: "Lot# 139928"
-            r'Lot\\s*#\\s*(\\d{5,7})\\b',
-            
-            # Pattern 5: Explicit multi-lot: 139912/139913
-            r'Lot\\s*(?:Number|No\\.?)?\\s*[:：]?\\s*(\\d{5,7})\\s*[/\\-]\\s*(\\d{5,7})',
-            
-            # Pattern 6: Implicit multi-lot: 139865/2
-            r'Lot\\s*(?:Number|No\\.?)?\\s*[:：]?\\s*(\\d{5,7})\\s*/\\s*(\\d{1,2})\\b',
-            
-            # Pattern 7: Arabic format
-            r'رقم\\s*(?:اللوت|الباتش)\\s*[:：]?\\s*(\\d{5,7})',
-            
-            # Pattern 8: Alphanumeric lot
-            r'Lot\\s*(?:Number|No\\.?)?\\s*[:：]?\\s*([A-Z]{2,3}\\d{3,4})\\b',
-            
-            # Pattern 9: Fallback - standalone 5-7 digit numbers
-            r'\\b(\\d{5,7})\\b',
-        ]
-        return patterns
-    
     def preprocess_image(self, image):
         try:
             if CV2_AVAILABLE:
-                return self._preprocess_with_opencv(image)
+                img_array = np.array(image)
+                img_cv = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
+                gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
+                denoised = cv2.fastNlMeansDenoising(gray, None, 10, 7, 21)
+                clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+                enhanced = clahe.apply(denoised)
+                _, binary = cv2.threshold(enhanced, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                return Image.fromarray(binary)
             else:
-                return self._preprocess_with_pil(image)
+                gray = image.convert('L')
+                enhancer = ImageEnhance.Contrast(gray)
+                return enhancer.enhance(2.0)
         except Exception as e:
             logger.warning(f"Image preprocessing failed: {e}, using original")
             return image
-    
-    def _preprocess_with_opencv(self, image):
-        img_array = np.array(image)
-        img_cv = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
-        gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
-        denoised = cv2.fastNlMeansDenoising(gray, None, 10, 7, 21)
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-        enhanced = clahe.apply(denoised)
-        _, binary = cv2.threshold(enhanced, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        return Image.fromarray(binary)
-    
-    def _preprocess_with_pil(self, image):
-        gray = image.convert('L')
-        enhancer = ImageEnhance.Contrast(gray)
-        enhanced = enhancer.enhance(2.0)
-        sharpener = ImageEnhance.Sharpness(enhanced)
-        sharpened = sharpener.enhance(2.0)
-        binary = sharpened.point(lambda x: 0 if x < 128 else 255, '1')
-        return binary.convert('L')
     
     def pdf_to_images(self, pdf_path):
         try:
@@ -133,7 +91,7 @@ class ExtractLotAgent:
     def extract_text_from_image(self, image):
         try:
             processed_img = self.preprocess_image(image)
-            languages = ['eng', 'eng+ara', 'ara']
+            languages = ['eng', 'eng+ara']
             best_text = ""
             for lang in languages:
                 try:
@@ -158,87 +116,105 @@ class ExtractLotAgent:
         for i, image in enumerate(images):
             logger.info(f"Processing page {i+1}/{len(images)}")
             text = self.extract_text_from_image(image)
-            all_text += text + "\\n---PAGE BREAK---\\n"
+            all_text += text + "\\n"
         self.save_extracted_text(pdf_path, all_text)
         return all_text
     
     def save_extracted_text(self, pdf_path, text):
         try:
-            debug_dir = os.path.join(self.config.get('paths', {}).get('base_dir', '.'), 'debug_texts')
-            os.makedirs(debug_dir, exist_ok=True)
-            base_name = os.path.basename(pdf_path)
-            text_file = os.path.join(debug_dir, f"{base_name}.txt")
+            debug_dir = Path(self.config.get('paths', {}).get('base_dir', '.')) / 'debug_texts'
+            debug_dir.mkdir(exist_ok=True)
+            base_name = Path(pdf_path).name
+            text_file = debug_dir / f"{base_name}.txt"
             with open(text_file, 'w', encoding='utf-8') as f:
                 f.write(text)
             logger.info(f"Debug text saved: {text_file}")
         except:
             pass
     
-    def extract_lot_numbers(self, text):
-        """Extract lot numbers with improved logic"""
-        lot_numbers = []
-        lot_info = []
-        
+    def extract_lot_from_text(self, text):
+        """Simplified lot extraction - directly search for patterns"""
         logger.info("=== SEARCHING FOR LOT NUMBER ===")
         
-        for pattern in self.lot_patterns:
-            matches = list(re.finditer(pattern, text, re.IGNORECASE))
-            if matches:
-                logger.info(f"Pattern matched: {pattern[:50]}...")
-            
-            for match in matches:
-                groups = match.groups()
-                
-                if len(groups) == 2:
-                    first, second = groups[0], groups[1]
-                    if len(second) >= 5:
-                        # Explicit multi-lot
-                        for num in [first, second]:
-                            if num not in lot_numbers:
-                                lot_numbers.append(num)
-                                lot_info.append({'num': num, 'type': 'explicit_multi'})
-                        logger.info(f"Found explicit multi-lot: {first}/{second}")
-                    else:
-                        # Implicit multi-lot
-                        if first not in lot_numbers:
-                            lot_numbers.append(first)
-                            lot_info.append({'num': first, 'type': 'implicit', 'count': int(second)})
-                        logger.info(f"Found implicit lot: {first}/{second}")
-                
-                elif len(groups) == 1:
-                    lot_num = groups[0]
-                    if lot_num not in lot_numbers:
-                        # Validate it's not a false positive (like year 2026)
-                        if not self._is_false_positive(lot_num, text):
-                            lot_numbers.append(lot_num)
-                            lot_info.append({'num': lot_num, 'type': 'single'})
-                            logger.info(f"Found single lot: {lot_num}")
+        # Normalize text
+        text_lower = text.lower()
         
-        return lot_numbers, lot_info
-    
-    def _is_false_positive(self, number, text):
-        """Check if number is likely a false positive"""
-        # Check if it's a year (2023, 2024, 2025, 2026)
-        if number in ['2023', '2024', '2025', '2026']:
-            return True
-        # Check if it's preceded by keywords that suggest it's not a lot number
-        patterns_to_exclude = [
-            r'Date\\s*[:：]?\\s*' + number,
-            r'Year\\s*[:：]?\\s*' + number,
-            r'Page\\s*' + number,
-            r'Certificate\\s*#?' + number,
-        ]
-        for pattern in patterns_to_exclude:
-            if re.search(pattern, text, re.IGNORECASE):
-                return True
-        return False
+        # Pattern 1: "Lot Number : 139928" (most common)
+        pattern1 = r'lot\\s+number\\s*[:：]\\s*(\\d{5,7})\\b'
+        match = re.search(pattern1, text_lower)
+        if match:
+            lot_num = match.group(1)
+            logger.info(f"✓ Found lot number (pattern 1): {lot_num}")
+            return {
+                "lot_raw": lot_num,
+                "lot_structured": {
+                    "type": "single",
+                    "base_lot": lot_num,
+                    "count": 1,
+                    "expanded_lots": [lot_num],
+                    "annotation_hint": None
+                }
+            }
+        
+        # Pattern 2: "Lot: 139928"
+        pattern2 = r'lot\\s*[:：]\\s*(\\d{5,7})\\b'
+        match = re.search(pattern2, text_lower)
+        if match:
+            lot_num = match.group(1)
+            logger.info(f"✓ Found lot number (pattern 2): {lot_num}")
+            return {
+                "lot_raw": lot_num,
+                "lot_structured": {
+                    "type": "single",
+                    "base_lot": lot_num,
+                    "count": 1,
+                    "expanded_lots": [lot_num],
+                    "annotation_hint": None
+                }
+            }
+        
+        # Pattern 3: "Lot No: 139928" or "Lot No.: 139928"
+        pattern3 = r'lot\\s+no\\.?\\s*[:：]\\s*(\\d{5,7})\\b'
+        match = re.search(pattern3, text_lower)
+        if match:
+            lot_num = match.group(1)
+            logger.info(f"✓ Found lot number (pattern 3): {lot_num}")
+            return {
+                "lot_raw": lot_num,
+                "lot_structured": {
+                    "type": "single",
+                    "base_lot": lot_num,
+                    "count": 1,
+                    "expanded_lots": [lot_num],
+                    "annotation_hint": None
+                }
+            }
+        
+        # Pattern 4: "Lot# 139928"
+        pattern4 = r'lot\\s*#\\s*(\\d{5,7})\\b'
+        match = re.search(pattern4, text_lower)
+        if match:
+            lot_num = match.group(1)
+            logger.info(f"✓ Found lot number (pattern 4): {lot_num}")
+            return {
+                "lot_raw": lot_num,
+                "lot_structured": {
+                    "type": "single",
+                    "base_lot": lot_num,
+                    "count": 1,
+                    "expanded_lots": [lot_num],
+                    "annotation_hint": None
+                }
+            }
+        
+        logger.warning("✗ No lot number found")
+        return None
     
     def extract_certification_number(self, text):
         patterns = [
-            r'Certificate\\s*(?:Number|No\\.?)?\\s*[:：]\\s*([A-Za-z]+[-–]\\d+)',
-            r'Cert\\.?\\s*#?\\s*[:：]?\\s*([A-Za-z0-9-]+)',
-            r'(Dokki[-–]\\d+)',
-            r'(ISM[-–]\\d+)',
+            r'certificate\\s*(?:number|no\\.?)?\\s*[:：]\\s*([a-za-z]+[-–]\\d+)',
+            r'cert\\.?\\s*#?\\s*[:：]?\\s*([a-za-z0-9-]+)',
+            r'(dokki[-–]\\d+)',
         ]
         for pattern in patterns:
             match = re.search(pattern, text, re.IGNORECASE)
@@ -250,9 +226,7 @@ class ExtractLotAgent:
         return "UNKNOWN"
     
     def extract_product_name(self, text):
-        # Try to get from "Sample : Basil" line
-        sample_pattern = r'Sample\\s*[:：]\\s*([A-Za-z]{3,20})'
-        match = re.search(sample_pattern, text, re.IGNORECASE)
+        match = re.search(r'sample\\s*[:：]\\s*([a-za-z]{3,20})', text, re.IGNORECASE)
         if match:
             product = match.group(1).strip()
             logger.info(f"Found product name: {product}")
@@ -267,11 +241,24 @@ class ExtractLotAgent:
             logger.error(f"No text extracted from: {cert_path}")
             return None
         
+        lot_data = self.extract_lot_from_text(text)
         cert_number = self.extract_certification_number(text)
         product_name = self.extract_product_name(text)
-        lot_numbers, lot_info = self.extract_lot_numbers(text)
         
-        lot_type = self.determine_lot_type(lot_info)
+        lot_numbers = []
+        lot_info = []
+        lot_type = "unknown"
+        
+        if lot_data:
+            structured = lot_data["lot_structured"]
+            lot_numbers = structured["expanded_lots"]
+            lot_type = structured["type"]
+            for lot in lot_numbers:
+                lot_info.append({
+                    "num": lot,
+                    "type": structured["type"],
+                    "hint": structured.get("annotation_hint")
+                })
         
         result = {
             "file_path": cert_path,
@@ -291,19 +278,6 @@ class ExtractLotAgent:
         logger.info(f"  - Structure: {lot_type}")
         
         return result
-    
-    def determine_lot_type(self, lot_info):
-        if not lot_info:
-            return "unknown"
-        types = [info['type'] for info in lot_info]
-        if 'implicit' in types:
-            return "implicit_multi"
-        elif types.count('explicit_multi') >= 2:
-            return "explicit_multi"
-        elif len(lot_info) == 1:
-            return "single"
-        else:
-            return "multiple"
     
     def run(self):
         logger.info("Starting ExtractLotAgent...")
