@@ -78,10 +78,10 @@ class AnnotatePrintAgent:
         base_dir = self.config.get('paths', {}).get('base_dir', '.')
         paths_config = self.config.get('paths', {})
         
-        self.source_cert_dir = os.path.join(base_dir, paths_config.get('source_cert', 'Input/Source_Cert'))
-        self.annotated_dir = os.path.join(base_dir, paths_config.get('annotated_cert', 'OutPut/Annotated_Certificates'))
-        self.printed_dir = os.path.join(base_dir, paths_config.get('printed_cert', 'OutPut/Printed_Annotated_Cert'))
-        self.cert_inbox = os.path.join(base_dir, paths_config.get('cert_inbox', 'InPut/Cert_Inbox'))
+        self.source_cert_dir = os.path.join(base_dir, paths_config.get('source_cert', 'GetCertAgent/Source_Cert'))
+        self.annotated_dir = os.path.join(base_dir, paths_config.get('annotated_cert', 'GetCertAgent/Annotated_Certificates'))
+        self.printed_dir = os.path.join(base_dir, paths_config.get('printed_cert', 'GetCertAgent/Printed_Annotated_Cert'))
+        self.cert_inbox = os.path.join(base_dir, paths_config.get('cert_inbox', 'GetCertAgent/Cert_Inbox'))
         
         for d in [self.source_cert_dir, self.annotated_dir, self.printed_dir]:
             os.makedirs(d, exist_ok=True)
@@ -191,34 +191,65 @@ class AnnotatePrintAgent:
             return None
     
     def is_printer_available(self):
+        """Check if printer is available"""
         if not WIN32_AVAILABLE:
+            logger.warning("⚠️ win32print not available - cannot print on this system")
+            logger.warning("   Install with: pip install pywin32")
             return False
         try:
             printers = [printer[2] for printer in win32print.EnumPrinters(2)]
+            logger.info(f"Available printers: {printers}")
+            
             if self.printer_name in printers:
+                logger.info(f"✓ Using configured printer: {self.printer_name}")
                 return True
+            
             default = win32print.GetDefaultPrinter()
             if default:
+                logger.info(f"⚠️ Configured printer not found, using default: {default}")
                 self.printer_name = default
                 return True
+            
+            logger.error("✗ No printer found!")
             return False
-        except:
+        except Exception as e:
+            logger.error(f"✗ Error checking printer: {e}")
             return False
     
     def print_pdf(self, pdf_path, retry=0):
+        """Print PDF file"""
         if not WIN32_AVAILABLE:
+            logger.warning("Cannot print - win32api not available")
             return False
         try:
+            logger.info(f"🖨️  Printing attempt {retry + 1}: {os.path.basename(pdf_path)}")
+            logger.info(f"   Printer: {self.printer_name}")
+            
             result = win32api.ShellExecute(0, "print", pdf_path, f'/d:"{self.printer_name}"', ".", 0)
-            return result > 32
-        except:
+            
+            if result > 32:
+                logger.info("✓ Print command sent successfully")
+                return True
+            else:
+                logger.error(f"✗ Print command failed with code: {result}")
+                return False
+        except Exception as e:
+            logger.error(f"✗ Print error: {e}")
             return False
     
     def print_with_retry(self, pdf_path):
+        """Print with retry logic"""
+        logger.info(f"Starting print with {self.retry_attempts} attempts, {self.retry_delay}s delay")
+        
         for attempt in range(self.retry_attempts):
             if self.print_pdf(pdf_path, attempt):
                 return True
-            time.sleep(self.retry_delay)
+            
+            if attempt < self.retry_attempts - 1:
+                logger.warning(f"⏳ Waiting {self.retry_delay}s before retry...")
+                time.sleep(self.retry_delay)
+        
+        logger.error("✗ All print attempts failed")
         return False
     
     def find_pdf_file(self, filename):
@@ -233,34 +264,59 @@ class AnnotatePrintAgent:
             cert_number = erp_result.get('cert_number', 'UNKNOWN')
             annotation_text = erp_result.get('annotation_text', '')
             
-            logger.info(f"Processing certificate: {cert_number}")
+            logger.info("=" * 60)
+            logger.info(f"📄 Processing certificate: {cert_number}")
+            logger.info(f"   Annotation: {annotation_text}")
             
             pdf_path = self.find_pdf_file(os.path.basename(original_pdf_path))
             if not pdf_path:
-                logger.error(f"PDF not found: {original_pdf_path}")
+                logger.error(f"✗ PDF not found: {original_pdf_path}")
                 return False
             
+            logger.info(f"✓ Found PDF: {pdf_path}")
+            
+            # إنشاء PDF معلّم
             annotated = self.build_annotated_pdf(pdf_path, annotation_text)
             if not annotated:
+                logger.error("✗ Failed to create annotated PDF")
                 return False
             
+            # محاولة الطباعة
             printed = False
+            logger.info("🖨️  Checking printer availability...")
+            
             if self.is_printer_available():
+                logger.info("✓ Printer is available - starting print...")
                 printed = self.print_with_retry(annotated)
+                
+                if printed:
+                    logger.info("✅ PRINTED SUCCESSFULLY!")
+                else:
+                    logger.warning("⚠️ Printing failed - file annotated but not printed")
+            else:
+                logger.warning("⚠️ No printer available - file annotated only")
             
             # نقل الملفات
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             new_name = f"{os.path.splitext(os.path.basename(pdf_path))[0]}.pdf"
-            shutil.move(pdf_path, os.path.join(self.source_cert_dir, new_name))
+            dest_path = os.path.join(self.source_cert_dir, new_name)
+            
+            logger.info(f"📁 Moving source PDF to: {dest_path}")
+            shutil.move(pdf_path, dest_path)
             
             if printed:
                 printed_name = f"{os.path.splitext(os.path.basename(pdf_path))[0]}_printed.pdf"
-                shutil.copy(annotated, os.path.join(self.printed_dir, printed_name))
+                printed_path = os.path.join(self.printed_dir, printed_name)
+                logger.info(f"📁 Copying to printed folder: {printed_path}")
+                shutil.copy(annotated, printed_path)
             
+            logger.info("=" * 60)
             return printed
             
         except Exception as e:
-            logger.error(f"Error processing certificate: {e}")
+            logger.error(f"✗ Error processing certificate: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return False
     
     def process_all(self, erp_results):

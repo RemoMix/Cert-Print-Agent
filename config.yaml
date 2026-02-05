@@ -28,7 +28,7 @@ excel:
     supplier: "Supplier"
 
 printing:
-  printer_name: "HP Neverstop Laser 100x PCLm-S"
+  printer_name: "HP Neverstop Laser 100x"
   retry_attempts: 3
   retry_delay_seconds: 10
   check_printer_interval: 30

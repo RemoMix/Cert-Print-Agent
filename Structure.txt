@@ -2,35 +2,40 @@ Cert-Print-Agent/
 │
 ├── config.yaml              # إعدادات المسارات والمستخدم
 ├── main.py                  # البرنامج الرئيسي
+├── Raw_Warehouses.xlsx  # ملف ERP
 ├── requirements.txt         # المكتبات
-├── Tesseract/
-├── bidi/
-├── arabic_reshaper/
-├── Poppler/
+│
+├── HelpersLib/
+│	├── Tesseract/
+│	├── bidi/
+│	├── arabic_reshaper/
+│	└── Poppler/
 ├── processed_emails.db
 │
 ├── logs/
 │   └── processing.log       # تسجيل العمليات
 │
-├── GetCertAgent/
+├── InPut/
 │   ├── Source_Cert/           			  # لحفظ اصول الشهادات
+│   ├── MyEmails/          	   			  # البريد المحفوظ (.eml)
+│   └── Cert_Inbox/       				  # الشهادات المستخرجة (PDF/JPG)
+│
+├── OutPut/
 │   ├── Annotated_Certificates/           # الشهادات المكتوب عليها
 │   ├── Printed_Annotated_Cert/       	  # الشهادات التى تم طباعتها
-│   ├── MyEmails/          	   			  # البريد المحفوظ (.eml)
-│   ├── Cert_Inbox/       				  # الشهادات المستخرجة (PDF/JPG)
 │   ├── Processed/        				  # الشهادات المعالجة
-│   └── TempImages/       				  # صور مؤقتة للـOCR
-│
+│   └── temp_images/       				  # صور مؤقتة للـOCR
+│		 └── json						  # ملفات json
 ├── Agents/
 │   ├── OutlookAgent.py
+│   ├── JSONExtractLotAgent.py
+│   ├── PDFtoImageAgent.py
 │   ├── ExtractLotAgent.py
 │   ├── ERPAgent.py
 │   ├── AnnotatePrintAgent.py
 │   └── LoggingAgent.py
 │
-├── Data/
-│   ├── Raw_Warehouses.xlsx  # ملف ERP
 │  
 │
 └── utils/
-    ├── file_utils.py       # معالجة الملفات
+    └── file_utils.py       # معالجة الملفات
