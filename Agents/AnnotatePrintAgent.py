@@ -192,7 +192,7 @@ class AnnotatePrintAgent:
             filename = os.path.basename(pdf_path)
             base_name, ext = os.path.splitext(filename)
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            out_pdf = os.path.join(self.annotated_dir, f"{base_name}_ANNOTATED{ext}")
+            out_pdf = os.path.join(self.annotated_dir, f"{base_name}_{timestamp}_ANNOTATED{ext}")
             
             with open(out_pdf, "wb") as f:
                 writer.write(f)
@@ -268,11 +268,11 @@ class AnnotatePrintAgent:
             
             # نقل الملفات
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            new_name = f"{os.path.splitext(os.path.basename(pdf_path))[0]}.pdf"
+            new_name = f"{os.path.splitext(os.path.basename(pdf_path))[0]}_{timestamp}.pdf"
             shutil.move(pdf_path, os.path.join(self.source_cert_dir, new_name))
             
             if printed:
-                printed_name = f"{os.path.splitext(os.path.basename(pdf_path))[0]}_printed.pdf"
+                printed_name = f"{os.path.splitext(os.path.basename(pdf_path))[0]}_{timestamp}_printed.pdf"
                 shutil.copy(annotated, os.path.join(self.printed_dir, printed_name))
             
             return printed
