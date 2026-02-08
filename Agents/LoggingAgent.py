@@ -1,4 +1,4 @@
-
+# LoggingAgent.py - النسخة المعدلة
 import logging
 import logging.handlers
 import os
@@ -41,8 +41,13 @@ class LoggingAgent:
     
     def setup_logger(self):
         """Setup logging system"""
+        # Get logs directory with fallback to default
+        try:
+            logs_dir = self.config.get('paths', {}).get('logs_dir', 'logs')
+        except:
+            logs_dir = 'logs'
+        
         # Create logs directory if it doesn't exist
-        logs_dir = self.config['paths']['logs_dir']
         os.makedirs(logs_dir, exist_ok=True)
         
         log_file = os.path.join(logs_dir, 'processing.log')
@@ -63,8 +68,8 @@ class LoggingAgent:
         
         # File handler with log rotation
         try:
-            max_bytes = self.config['logging'].get('max_size_mb', 10) * 1024 * 1024
-            backup_count = self.config['logging'].get('backup_count', 5)
+            max_bytes = self.config.get('logging', {}).get('max_size_mb', 10) * 1024 * 1024
+            backup_count = self.config.get('logging', {}).get('backup_count', 5)
         except:
             max_bytes = 10 * 1024 * 1024
             backup_count = 5

@@ -1,54 +1,57 @@
-# Cert-Print-Agent Configuration v3.0
+# Cert-Agent-V2 Simple Configuration
+# No OCR, No Images, Extracts lot from filename only
 
 paths:
   base_dir: "."
-  emails_dir: "InPut/MyEmails"
-  cert_inbox: "InPut/Cert_Inbox"  # <-- الملفات هنا
-  source_cert: "InPut/Source_Cert"
-  annotated_cert: "OutPut/Annotated_Certificates"
-  printed_cert: "OutPut/Printed_Annotated_Cert"
-  processed: "OutPut/Processed"
-  temp_images: "OutPut/temp_images"  # <-- JSON هنا
   logs_dir: "logs"
-  erp_file: "Raw_Warehouses.xlsx"
-  poppler_path: "HelpersLib/Poppler/Library/bin"
-  tesseract_path: "HelpersLib/Tesseract/tesseract.exe"
-  arabic_reshaper_path: "HelpersLib/arabic_reshaper"
-  bidi_path: "HelpersLib/bidi"
+  # Input folders
+  cert_inbox: "InPut/Cert_Inbox"           # PDF certificates from email
+  email_attachments: "InPut/MyEmails"      # Raw email attachments (optional)
+  
+  # Data files
+  erp_file: "Raw_Warehouses.xlsx"     # Excel database
+  
+  # Output folders (auto-created)
+  output_dir: "OutPut"
+  annotated_cert: "OutPut/Annotated_Certificates"
+  not_found_cert: "OutPut/Not_Founded_In_Excel"
+  printed_cert: "OutPut/Printed_Annotated_Cert"
 
+# Excel/ERP Settings
 excel:
-  sheets:
+  sheets:                                  # Sheets to search (in order)
     - "2026"
     - "2025"
     - "2024"
     - "2023"
-  columns:
-    cert_lot: "NO"
-    internal_lot: "Lot Num."
-    supplier: "Supplier"
+  
+  columns:                                 # Column names in Excel
+    cert_lot: "NO"                        # Column with certificate lot number
+    internal_lot: "Lot Num."              # Column with internal lot number
+    supplier: "Supplier"                  # Column with supplier name
 
+# Printer Settings
 printing:
-  printer_name: "HP Neverstop Laser 100x"
+  printer_name: "HP Neverstop Laser 100x"  # CHANGE THIS to your printer name
   retry_attempts: 3
   retry_delay_seconds: 10
-  check_printer_interval: 30
-  max_retries: 5
-  annotation:
-    position_x: 50
-    position_y: 750
-    font_size: 11
 
-ocr:
-  language: "eng"
-  dpi: 300
+# Outlook Settings (Optional)
+outlook:
+  enabled: true                            # Set to false to disable email checking
+  folder: "Inbox"                          # Outlook folder to monitor
+  subject_filter: "certificate"            # Only process emails with this in subject
+  delete_after_download: false             # Keep emails in Outlook after processing
 
+# Monitoring Settings
 monitoring:
-  check_interval_minutes: 5
-  outlook_autostart: true
-  processed_emails_db: "processed_emails.db"
+  check_interval_minutes: 5                # How often to check for new files
+  
+# Annotation Settings (Text on PDF)
+annotation:
+  font_size: 17
+  x_position: 600                          # From right side
+  y_position: 820                          # From top
+  background_color: [0.6, 0.6, 0.6]       # RGB gray
+  text_color: [0, 0, 0]                   # RGB black
 
-logging:
-  log_file: "logs/processing.log"
-  level: "INFO"
-  max_size_mb: 10
-  backup_count: 5

@@ -1,22 +1,0 @@
-
----
-
-## 🚀 **الخطوات النهائية السريعة:**
-
-### **1. فتح Command Prompt في مجلد المشروع:**
-- افتح مجلد `Cert-Print-Agent`
-- اضغط `Shift + Right Click` → "Open PowerShell window here"
-
-### **2. تشغيل هذه الأوامر:**
-```powershell
-# إنشاء البيئة الافتراضية
-python -m venv .venv
-
-# تفعيل البيئة
-.venv\Scripts\activate
-
-# تثبيت المتطلبات
-pip install -r requirements.txt
-
-# تشغيل النظام
-python main.py

@@ -16,8 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from Agents.LoggingAgent import get_logger
 from Agents.OutlookAgent import OutlookAgent
-from Agents.PDFtoImageAgent import PDFtoImageAgent
-from Agents.JSONExtractLotAgent import JSONExtractLotAgent
+from Agents.ExtractLotAgent import ExtractLotAgent  # ✅ استخدام النسخة الجديدة
 from Agents.ERPAgent import ERPAgent
 from Agents.AnnotatePrintAgent import AnnotatePrintAgent
 
@@ -32,8 +31,7 @@ class CertPrintOrchestrator:
         
         # Initialize all agents
         self.outlook_agent = OutlookAgent(config_path)
-        self.pdf_agent = PDFtoImageAgent(config_path)
-        self.json_extract_agent = JSONExtractLotAgent(config_path)
+        self.extract_agent = ExtractLotAgent(config_path)  # ✅ النسخة الجديدة
         self.erp_agent = ERPAgent(config_path)
         self.print_agent = AnnotatePrintAgent(config_path)
         
@@ -51,46 +49,37 @@ class CertPrintOrchestrator:
     def process_certificates(self):
         """معالجة الشهادات من البداية للنهاية"""
         try:
-            self.logger.info("\\n" + "="*60)
-            self.logger.info("بدء دورة معالجة جديدة...")
+            self.logger.info("\n" + "="*60)
+            self.logger.info("Start new process cycle...")
             self.logger.info("="*60)
             
-            # Stage 1: PDF → JSON (OCR)
-            self.logger.info("\\n--- المرحلة 1: استخراج النص من PDF ---")
-            pdf_results = self.pdf_agent.run()
-            
-            if not pdf_results:
-                self.logger.info("مفيش PDFs جديدة للمعالجة")
-                return True
-            
-            self.logger.info(f"✓ تم معالجة {len(pdf_results)} PDF")
-            
-            # Stage 2: JSON → Extract Lot
-            self.logger.info("\\n--- المرحلة 2: استخراج أرقام اللوت ---")
-            extraction_results = self.json_extract_agent.run()
+            # Stage 1: Extract Lot from filename (بدل OCR)
+            self.logger.info("\n--- Phase 1 : Extract lot number ---")
+            extraction_results = self.extract_agent.run()
             
             if not extraction_results:
-                self.logger.error("مفيش لوتات مستخرجة")
-                return False
+                self.logger.info("No PDFs for process")
+                return True
             
-            self.logger.info(f"✓ تم استخراج {len(extraction_results)} شهادة")
+            self.logger.info(f"✓  {len(extraction_results)} Cert Extracted")
             
-            # Stage 3: ERP Lookup
-            self.logger.info("\\n--- المرحلة 3: البحث في ERP ---")
+            # Stage 2: ERP Lookup
+            self.logger.info("\n--- Phase 2 : search in ERP ---")
             erp_results = self.erp_agent.run(extraction_results)
             
             if not erp_results:
-                self.logger.error("فشل البحث في ERP")
+                self.logger.error("Error in ERP")
                 return False
             
-            # Stage 4: Annotate & Print (الخطوة المهمة!)
-            self.logger.info("\\n--- المرحلة 4: الكتابة على الشهادات والطباعة ---")
+            # Stage 3: Annotate & Print
+            self.logger.info("\n--- Phase 3 : Writing on Certification ---")
             print_results = self.print_agent.run(erp_results)
             
             if print_results:
                 printed_count = print_results.get('printed', 0)
-                annotated_count = print_results.get('annotated', 0)
-                self.logger.info(f"✓ تم طباعة: {printed_count}, تعليق فقط: {annotated_count}")
+                not_found_count = print_results.get('not_found', 0)
+                annotated_count = print_results.get('annotated_only', 0)
+                self.logger.info(f"✓ Printed: {printed_count}, Not Found: {not_found_count}, تعليق فقط: {annotated_count}")
             
             # Cleanup: Move processed PDFs to Source_Cert
             self.archive_processed_pdfs()
@@ -98,7 +87,7 @@ class CertPrintOrchestrator:
             return True
             
         except Exception as e:
-            self.logger.error(f"خطأ في المعالجة: {e}")
+            self.logger.error(f"Processing Error {e}")
             import traceback
             self.logger.error(traceback.format_exc())
             return False
@@ -134,7 +123,7 @@ class CertPrintOrchestrator:
     def check_outlook(self):
         """فحص الإيميل وجلب الشهادات الجديدة"""
         try:
-            self.logger.info("\\n--- فحص الإيميل ---")
+            self.logger.info("\n--- فحص الإيميل ---")
             new_certs = self.outlook_agent.run()
             
             if new_certs:
@@ -150,7 +139,7 @@ class CertPrintOrchestrator:
     
     def run_continuous(self):
         """التشغيل المستمر - شغال على طول"""
-        self.logger.info("\\n" + "="*60)
+        self.logger.info("\n" + "="*60)
         self.logger.info("Cert-Print-Agent - نظام المراقبة المستمر")
         self.logger.info("الضغط على Ctrl+C للإيقاف")
         self.logger.info("="*60)
@@ -162,7 +151,7 @@ class CertPrintOrchestrator:
             start_time = datetime.now()
             
             try:
-                self.logger.info(f"\\n{'='*60}")
+                self.logger.info(f"\n{'='*60}")
                 self.logger.info(f"دورة #{cycle_count} - {start_time.strftime('%H:%M:%S')}")
                 self.logger.info(f"{'='*60}")
                 
@@ -177,24 +166,24 @@ class CertPrintOrchestrator:
                 wait_time = max(0, (self.check_interval * 60) - elapsed)
                 
                 if wait_time > 0 and self.running:
-                    self.logger.info(f"\\nانتظار {int(wait_time)} ثانية للدورة التالية...")
+                    self.logger.info(f"\nانتظار {int(wait_time)} ثانية للدورة التالية...")
                     time.sleep(wait_time)
                 
             except KeyboardInterrupt:
-                self.logger.info("\\nتم إيقاف النظام بواسطة المستخدم")
+                self.logger.info("\nتم إيقاف النظام بواسطة المستخدم")
                 self.running = False
                 break
             except Exception as e:
                 self.logger.error(f"خطأ في الدورة: {e}")
                 time.sleep(60)  # انتظر دقيقة لو حصل خطأ
         
-        self.logger.info("\\n" + "="*60)
+        self.logger.info("\n" + "="*60)
         self.logger.info("النظام توقف")
         self.logger.info("="*60)
     
     def run_once(self):
         """تشغيل دورة واحدة فقط"""
-        self.logger.info("\\n" + "="*60)
+        self.logger.info("\n" + "="*60)
         self.logger.info("تشغيل دورة واحدة")
         self.logger.info("="*60)
         

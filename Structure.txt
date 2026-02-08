@@ -4,6 +4,10 @@ Cert-Print-Agent/
 ├── main.py                  # البرنامج الرئيسي
 ├── Raw_Warehouses.xlsx  # ملف ERP
 ├── requirements.txt         # المكتبات
+├── fonts
+│	├── trado.ttf
+│	├── arial.ttf
+│	└── arabtype.ttf
 │
 ├── HelpersLib/
 │	├── Tesseract/
@@ -36,7 +40,7 @@ Cert-Print-Agent/
 │   ├── AnnotatePrintAgent.py
 │   └── LoggingAgent.py
 │
-│  
-│
+├── SumatraPDF-3.5.2-64
+│	└── SumatraPDF-3.5.2-64.exe
 └── utils/
     └── file_utils.py       # معالجة الملفات
