@@ -11,7 +11,6 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 import logging
 import subprocess
-import tempfile
 
 # مكتبات لتشكيل النص العربي بشكل صحيح
 try:
@@ -87,8 +86,10 @@ class AnnotatePrintAgent:
         self.annotated_dir = os.path.join(base_dir, paths_config.get('annotated_cert', 'OutPut/Annotated_Certificates'))
         self.printed_dir = os.path.join(base_dir, paths_config.get('printed_cert', 'OutPut/Printed_Annotated_Cert'))
         self.cert_inbox = os.path.join(base_dir, paths_config.get('cert_inbox', 'InPut/Cert_Inbox'))
+        # مجلد جديد للشهادات اللي ملقتش في Excel
+        self.not_found_dir = os.path.join(base_dir, 'OutPut', 'Not_Founded_In_Excel')
         
-        for d in [self.source_cert_dir, self.annotated_dir, self.printed_dir]:
+        for d in [self.source_cert_dir, self.annotated_dir, self.printed_dir, self.not_found_dir]:
             os.makedirs(d, exist_ok=True)
     
     def prepare_arabic_text(self, text):
@@ -104,7 +105,7 @@ class AnnotatePrintAgent:
             logger.warning(f"Error preparing Arabic text: {e}")
             return text
     
-    def build_annotated_pdf(self, pdf_path, annotation_text):
+    def build_annotated_pdf(self, pdf_path, annotation_text, is_not_found=False):
         """بناء PDF مع التعليقات التوضيحية"""
         try:
             logger.info(f"Building annotated PDF for: {os.path.basename(pdf_path)}")
@@ -121,24 +122,27 @@ class AnnotatePrintAgent:
             packet = io.BytesIO()
             can = canvas.Canvas(packet, pagesize=A4)
             
+            # الإعدادات الجديدة
             font = "ArabicFont" if FONT_PATH else "Helvetica"
-            size = 12
+            size = 17  # حجم أكبر
             can.setFont(font, size)
             
-            x_right = 550
+            x_right = 600  # أقصى اليمين
             y_position = 820
             
             if full_text_display:
                 try:
                     text_width = pdfmetrics.stringWidth(full_text_display, font, size)
                 except:
-                    text_width = len(full_text_display) * 6
+                    text_width = len(full_text_display) * 10
                 
-                can.setFillColorRGB(0.95, 0.95, 0.95)
+                # لون رمادي غامق للخلفية
+                can.setFillColorRGB(0.6, 0.6, 0.6)
                 padding = 10
                 can.rect(x_right - text_width - padding*2, y_position - 5, 
-                        text_width + padding*2, 25, fill=1, stroke=0)
+                        text_width + padding*2, 30, fill=1, stroke=0)
                 
+                # نص أسود
                 can.setFillColorRGB(0, 0, 0)
                 can.drawRightString(x_right - padding, y_position, full_text_display)
             
@@ -155,13 +159,22 @@ class AnnotatePrintAgent:
             
             filename = os.path.basename(pdf_path)
             base_name, ext = os.path.splitext(filename)
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            out_pdf = os.path.join(self.annotated_dir, f"{base_name}_ANNOTATED_{timestamp}{ext}")
+            # صيغة التاريخ الجديدة: 07-Feb-25_082733
+            timestamp = datetime.now().strftime("%d-%b-%y_%H%M%S")
+            
+            if is_not_found:
+                # لو ملقتش في Excel، حفظ في مجلد Not_Founded_In_Excel
+                out_pdf = os.path.join(self.not_found_dir, f"{base_name}_NOT_FOUND_{timestamp}{ext}")
+            else:
+                out_pdf = os.path.join(self.annotated_dir, f"{base_name}_ANNOTATED_{timestamp}{ext}")
             
             with open(out_pdf, "wb") as f:
                 writer.write(f)
             
-            logger.info(f"✓ Annotated PDF created: {out_pdf}")
+            if is_not_found:
+                logger.info(f"✓ Not Found PDF saved: {out_pdf}")
+            else:
+                logger.info(f"✓ Annotated PDF created: {out_pdf}")
             return out_pdf
             
         except Exception as e:
@@ -197,34 +210,129 @@ class AnnotatePrintAgent:
             logger.error(f"Error checking printer: {e}")
             return False
     
+    def get_sumatra_path(self):
+        """البحث عن SumatraPDF في كل الأماكن المحتملة"""
+        search_dirs = []
+        
+        script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        search_dirs.append(script_dir)
+        
+        cwd = os.getcwd()
+        search_dirs.append(cwd)
+        
+        config_base = self.config.get('paths', {}).get('base_dir', '')
+        if config_base and config_base != '.':
+            search_dirs.append(config_base)
+        
+        env_path = os.environ.get('PATH', '')
+        search_dirs.extend(env_path.split(os.pathsep))
+        
+        possible_names = [
+            "SumatraPDF-3.5.2-64.exe",
+            "SumatraPDF.exe",
+        ]
+        
+        for directory in search_dirs:
+            if not directory or not os.path.isdir(directory):
+                continue
+                
+            for name in possible_names:
+                full_path = os.path.join(directory, name)
+                if os.path.exists(full_path):
+                    logger.info(f"✓ Found SumatraPDF at: {full_path}")
+                    return full_path
+                
+                for subdir in os.listdir(directory):
+                    subdir_path = os.path.join(directory, subdir)
+                    if os.path.isdir(subdir_path):
+                        full_path = os.path.join(subdir_path, name)
+                        if os.path.exists(full_path):
+                            logger.info(f"✓ Found SumatraPDF at: {full_path}")
+                            return full_path
+        
+        program_files_paths = [
+            r"C:\\Program Files\\SumatraPDF\\SumatraPDF.exe",
+            r"C:\\Program Files (x86)\\SumatraPDF\\SumatraPDF.exe",
+        ]
+        
+        for path in program_files_paths:
+            if os.path.exists(path):
+                logger.info(f"✓ Found SumatraPDF at: {path}")
+                return path
+        
+        logger.warning("✗ SumatraPDF not found in any location")
+        return None
+    
     def print_pdf(self, pdf_path):
-        """طباعة ملف PDF باستخدام SumatraPDF أو Adobe"""
+        """طباعة ملف PDF"""
+        logger.info(f"Attempting to print: {os.path.basename(pdf_path)}")
+        
+        if self.print_with_sumatra(pdf_path):
+            return True
+        
+        if self.print_with_adobe(pdf_path):
+            return True
+        
+        if self.print_with_default(pdf_path):
+            return True
+        
+        logger.error("All printing methods failed")
+        return False
+    
+    def print_with_sumatra(self, pdf_path):
+        """طباعة باستخدام SumatraPDF"""
         try:
-            logger.info(f"Attempting to print: {os.path.basename(pdf_path)}")
+            sumatra = self.get_sumatra_path()
             
-            # طريقة 1: استخدام SumatraPDF (الأفضل للطابعات)
-            sumatra_paths = [
-                r"C:\\Program Files\\SumatraPDF\\SumatraPDF.exe",
-                r"C:\\Program Files (x86)\\SumatraPDF\\SumatraPDF.exe",
+            if not sumatra:
+                return False
+            
+            logger.info(f"Using SumatraPDF: {sumatra}")
+            
+            cmd = [
+                sumatra,
+                "-print-to", self.printer_name,
+                "-print-settings", "fit",
+                "-exit-when-done",
+                pdf_path
             ]
             
-            for sumatra in sumatra_paths:
-                if os.path.exists(sumatra):
-                    cmd = [
-                        sumatra,
-                        "-print-to", self.printer_name,
-                        "-print-settings", "fit",
-                        pdf_path
-                    ]
-                    logger.info(f"Using SumatraPDF: {sumatra}")
-                    result = subprocess.run(cmd, capture_output=True, timeout=30)
-                    if result.returncode == 0:
-                        logger.info("✓ Print command sent via SumatraPDF")
-                        return True
-                    else:
-                        logger.warning(f"SumatraPDF error: {result.stderr}")
+            logger.info(f"Command: {' '.join(cmd)}")
             
-            # طريقة 2: استخدام Adobe Acrobat Reader
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                timeout=60,
+                shell=False
+            )
+            
+            logger.info(f"Return code: {result.returncode}")
+            
+            if result.stdout:
+                logger.info(f"stdout: {result.stdout.decode()}")
+            if result.stderr:
+                logger.warning(f"stderr: {result.stderr.decode()}")
+            
+            if result.returncode == 0:
+                logger.info("✓ SumatraPDF print completed successfully")
+                time.sleep(3)
+                return True
+            else:
+                logger.error(f"SumatraPDF failed with code: {result.returncode}")
+                return False
+                
+        except subprocess.TimeoutExpired:
+            logger.error("SumatraPDF timeout (60 seconds)")
+            return False
+        except Exception as e:
+            logger.error(f"SumatraPDF error: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return False
+    
+    def print_with_adobe(self, pdf_path):
+        """طباعة باستخدام Adobe Acrobat"""
+        try:
             adobe_paths = [
                 r"C:\\Program Files\\Adobe\\Acrobat DC\\Acrobat\\Acrobat.exe",
                 r"C:\\Program Files (x86)\\Adobe\\Acrobat Reader DC\\Reader\\AcroRd32.exe",
@@ -233,70 +341,55 @@ class AnnotatePrintAgent:
             
             for adobe in adobe_paths:
                 if os.path.exists(adobe):
-                    cmd = [
-                        adobe,
-                        "/t", pdf_path, self.printer_name
-                    ]
                     logger.info(f"Using Adobe: {adobe}")
-                    result = subprocess.run(cmd, capture_output=True, timeout=30)
-                    logger.info("✓ Print command sent via Adobe")
+                    
+                    cmd = [adobe, "/t", pdf_path, self.printer_name]
+                    logger.info(f"Command: {' '.join(cmd)}")
+                    
+                    subprocess.Popen(cmd)
+                    
+                    logger.info("Waiting 10 seconds for Adobe to print...")
+                    time.sleep(10)
+                    
+                    logger.info("✓ Adobe print command sent")
                     return True
             
-            # طريقة 3: استخدام Edge Browser (الأسهل)
-            edge_path = r"C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe"
-            if os.path.exists(edge_path):
-                cmd = [
-                    edge_path,
-                    "--headless",
-                    "--disable-gpu",
-                    "--print-to-pdf-no-header",
-                    f"--print-to-pdf={tempfile.gettempdir()}\\temp_print.pdf",
-                    pdf_path
-                ]
-                # Edge بيطبع للـ PDF، مش للطابعة مباشرة
-                pass
-            
-            # طريقة 4: استخدام win32print مباشرة (للـ Windows)
-            if WIN32_AVAILABLE:
-                return self.print_pdf_raw(pdf_path)
-            
-            logger.error("No printing method available")
+            logger.warning("Adobe not found")
             return False
             
         except Exception as e:
-            logger.error(f"Error printing: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
+            logger.error(f"Adobe error: {e}")
             return False
     
-    def print_pdf_raw(self, pdf_path):
-        """طباعة مباشرة باستخدام win32print"""
+    def print_with_default(self, pdf_path):
+        """استخدام الطابعة الافتراضية لـ Windows"""
         try:
-            logger.info("Trying raw print via win32print...")
+            if not WIN32_AVAILABLE:
+                return False
             
-            # فتح الملف كـ binary
-            with open(pdf_path, 'rb') as f:
-                data = f.read()
+            logger.info("Using Windows default print method...")
             
-            # فتح الطابعة
-            hPrinter = win32print.OpenPrinter(self.printer_name)
-            try:
-                # بدء وثيقة طباعة
-                hJob = win32print.StartDocPrinter(hPrinter, 1, (os.path.basename(pdf_path), None, "RAW"))
-                try:
-                    win32print.StartPagePrinter(hPrinter)
-                    win32print.WritePrinter(hPrinter, data)
-                    win32print.EndPagePrinter(hPrinter)
-                finally:
-                    win32print.EndDocPrinter(hPrinter)
-            finally:
-                win32print.ClosePrinter(hPrinter)
+            result = win32api.ShellExecute(
+                0,
+                "print",
+                pdf_path,
+                None,
+                ".",
+                0
+            )
             
-            logger.info("✓ Raw print command sent")
-            return True
+            logger.info(f"ShellExecute result: {result}")
             
+            if result > 32:
+                logger.info("✓ Default print command sent")
+                time.sleep(5)
+                return True
+            else:
+                logger.error(f"ShellExecute failed with code: {result}")
+                return False
+                
         except Exception as e:
-            logger.error(f"Raw print error: {e}")
+            logger.error(f"Default print error: {e}")
             return False
     
     def print_with_retry(self, pdf_path):
@@ -338,11 +431,17 @@ class AnnotatePrintAgent:
             annotation_text = erp_result.get('annotation_text', '')
             file_path = erp_result.get('file_path', '')
             file_name = erp_result.get('file_name', '')
+            all_found = erp_result.get('all_found', False)
+            lot_results = erp_result.get('lot_results', [])
+            
+            # التحقق لو ملقتش في Excel
+            is_not_found = not all_found or not any(r.get('found') for r in lot_results)
             
             logger.info(f"\\n{'='*50}")
             logger.info(f"Processing certificate: {cert_number}")
             logger.info(f"File: {file_name}")
             logger.info(f"Annotation: {annotation_text}")
+            logger.info(f"Found in Excel: {not is_not_found}")
             logger.info(f"{'='*50}")
             
             # البحث عن ملف PDF
@@ -358,19 +457,46 @@ class AnnotatePrintAgent:
             logger.info(f"Found PDF: {pdf_path}")
             
             # إنشاء PDF مكتوب عليه
-            annotated_path = self.build_annotated_pdf(pdf_path, annotation_text)
+            annotated_path = self.build_annotated_pdf(pdf_path, annotation_text, is_not_found)
             if not annotated_path:
                 logger.error("Failed to create annotated PDF")
                 return {'success': False, 'printed': False, 'error': 'Annotation failed'}
             
-            # محاولة الطباعة
+            # لو ملقتش في Excel، ماتطبعش، حفظ بس
+            if is_not_found:
+                logger.warning(f"⚠ Certificate NOT FOUND in Excel - saved to: {self.not_found_dir}")
+                
+                # نقل الملف الأصلي للأرشيف برضه
+                try:
+                    if os.path.exists(pdf_path):
+                        archive_name = os.path.basename(pdf_path)
+                        archive_path = os.path.join(self.source_cert_dir, archive_name)
+                        
+                        if os.path.exists(archive_path):
+                            timestamp = datetime.now().strftime("%d-%b-%y_%H%M%S")
+                            archive_path = os.path.join(self.source_cert_dir, f"{timestamp}_{archive_name}")
+                        
+                        shutil.move(pdf_path, archive_path)
+                        logger.info(f"Archived original to: {archive_path}")
+                except Exception as e:
+                    logger.error(f"Error archiving: {e}")
+                
+                return {
+                    'success': True,
+                    'printed': False,
+                    'not_found': True,
+                    'annotated_path': annotated_path,
+                    'cert_number': cert_number
+                }
+            
+            # محاولة الطباعة (للشهادات اللي اتلقت في Excel)
             printed = False
             if self.is_printer_available():
                 printed = self.print_with_retry(annotated_path)
                 if printed:
                     logger.info("✓✓✓ Certificate printed successfully! ✓✓✓")
                 else:
-                    logger.warning("⚠ Certificate annotated but not printed")
+                    logger.warning("⚠ Certificate annotated but NOT printed")
             else:
                 logger.warning("⚠ Printer not available - saved for manual printing")
             
@@ -381,8 +507,8 @@ class AnnotatePrintAgent:
                     archive_path = os.path.join(self.source_cert_dir, archive_name)
                     
                     if os.path.exists(archive_path):
-                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_")
-                        archive_path = os.path.join(self.source_cert_dir, timestamp + archive_name)
+                        timestamp = datetime.now().strftime("%d-%b-%y_%H%M%S")
+                        archive_path = os.path.join(self.source_cert_dir, f"{timestamp}_{archive_name}")
                     
                     shutil.move(pdf_path, archive_path)
                     logger.info(f"Archived original to: {archive_path}")
@@ -402,6 +528,7 @@ class AnnotatePrintAgent:
             return {
                 'success': True,
                 'printed': printed,
+                'not_found': False,
                 'annotated_path': annotated_path,
                 'cert_number': cert_number
             }
@@ -425,6 +552,7 @@ class AnnotatePrintAgent:
         results = {
             'total': len(erp_results),
             'printed': 0,
+            'not_found': 0,
             'annotated_only': 0,
             'failed': 0,
             'details': []
@@ -436,7 +564,9 @@ class AnnotatePrintAgent:
             results['details'].append(result)
             
             if result.get('success'):
-                if result.get('printed'):
+                if result.get('not_found'):
+                    results['not_found'] += 1
+                elif result.get('printed'):
                     results['printed'] += 1
                 else:
                     results['annotated_only'] += 1
@@ -444,7 +574,7 @@ class AnnotatePrintAgent:
                 results['failed'] += 1
         
         logger.info(f"\\n{'='*60}")
-        logger.info(f"Summary: {results['printed']} printed, {results['annotated_only']} annotated, {results['failed']} failed")
+        logger.info(f"Summary: {results['printed']} printed, {results['not_found']} not found, {results['annotated_only']} annotated, {results['failed']} failed")
         logger.info(f"{'='*60}")
         
         return results
@@ -473,7 +603,9 @@ if __name__ == "__main__":
             'cert_number': 'CERT001',
             'annotation_text': 'عزمي ابراهيم - Lot 2601',
             'file_name': 'test_certificate.pdf',
-            'file_path': 'test_certificate.pdf'
+            'file_path': 'test_certificate.pdf',
+            'all_found': True,
+            'lot_results': [{'found': True}]
         }
     ]
     

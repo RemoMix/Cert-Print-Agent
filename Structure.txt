@@ -23,6 +23,7 @@ Cert-Print-Agent/
 ├── OutPut/
 │   ├── Annotated_Certificates/           # الشهادات المكتوب عليها
 │   ├── Printed_Annotated_Cert/       	  # الشهادات التى تم طباعتها
+│   ├── Not_Founded_In_Excel/       	  # الشهادات التى لم يتم العثور عليها فى ملف الاكسيل
 │   ├── Processed/        				  # الشهادات المعالجة
 │   └── temp_images/       				  # صور مؤقتة للـOCR
 │		 └── json						  # ملفات json
