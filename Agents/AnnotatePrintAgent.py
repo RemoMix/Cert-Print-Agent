@@ -105,6 +105,7 @@ class AnnotatePrintAgent:
             logger.warning(f"Error preparing Arabic text: {e}")
             return text
     
+    # AnnotatePrintAgent.py - تحسين الكتابة على PDF
     def build_annotated_pdf(self, pdf_path, annotation_text, is_not_found=False):
         """بناء PDF مع التعليقات التوضيحية"""
         try:
@@ -122,29 +123,30 @@ class AnnotatePrintAgent:
             packet = io.BytesIO()
             can = canvas.Canvas(packet, pagesize=A4)
             
-            # الإعدادات الجديدة
+            # الإعدادات
             font = "ArabicFont" if FONT_PATH else "Helvetica"
-            size = 17  # حجم أكبر
+            size = 17
             can.setFont(font, size)
             
-            x_right = 600  # أقصى اليمين
+            # حساب عرض النص
+            try:
+                text_width = pdfmetrics.stringWidth(full_text_display, font, size)
+            except:
+                text_width = len(full_text_display) * 10
+            
+            # موضع الكتابة (أعلى اليمين)
+            x_right = 580
             y_position = 820
             
-            if full_text_display:
-                try:
-                    text_width = pdfmetrics.stringWidth(full_text_display, font, size)
-                except:
-                    text_width = len(full_text_display) * 10
-                
-                # لون رمادي غامق للخلفية
-                can.setFillColorRGB(0.6, 0.6, 0.6)
-                padding = 10
-                can.rect(x_right - text_width - padding*2, y_position - 5, 
-                        text_width + padding*2, 30, fill=1, stroke=0)
-                
-                # نص أسود
-                can.setFillColorRGB(0, 0, 0)
-                can.drawRightString(x_right - padding, y_position, full_text_display)
+            # خلفية رمادية
+            can.setFillColorRGB(0.6, 0.6, 0.6)
+            padding = 10
+            can.rect(x_right - text_width - padding*2, y_position - 5, 
+                    text_width + padding*2, 30, fill=1, stroke=0)
+            
+            # النص بالأسود
+            can.setFillColorRGB(0, 0, 0)
+            can.drawRightString(x_right - padding, y_position, full_text_display)
             
             can.save()
             packet.seek(0)
@@ -159,11 +161,9 @@ class AnnotatePrintAgent:
             
             filename = os.path.basename(pdf_path)
             base_name, ext = os.path.splitext(filename)
-            # صيغة التاريخ الجديدة: 07-Feb-25_082733
             timestamp = datetime.now().strftime("%d-%b-%y_%H%M%S")
             
             if is_not_found:
-                # لو ملقتش في Excel، حفظ في مجلد Not_Founded_In_Excel
                 out_pdf = os.path.join(self.not_found_dir, f"{base_name}_NOT_FOUND_{timestamp}{ext}")
             else:
                 out_pdf = os.path.join(self.annotated_dir, f"{base_name}_ANNOTATED_{timestamp}{ext}")
@@ -171,10 +171,7 @@ class AnnotatePrintAgent:
             with open(out_pdf, "wb") as f:
                 writer.write(f)
             
-            if is_not_found:
-                logger.info(f"✓ Not Found PDF saved: {out_pdf}")
-            else:
-                logger.info(f"✓ Annotated PDF created: {out_pdf}")
+            logger.info(f"✓ Annotated PDF created: {out_pdf}")
             return out_pdf
             
         except Exception as e:

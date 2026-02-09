@@ -1,6 +1,7 @@
 # ERPAgent.py - معالجة كل أنماط اللوت والكتابة الصحيحة على الشهادة
 import pandas as pd
 import os
+import re
 import yaml
 from datetime import datetime
 import logging
@@ -143,6 +144,7 @@ class ERPAgent:
         
         return results
     
+    # ERPAgent.py - توليد النص الصحيح للتعليق
     def generate_annotation_text(self, lot_results, annotation_hint=None):
         """
         توليد نص التعليق للكتابة على الشهادة
@@ -155,6 +157,17 @@ class ERPAgent:
             lots_str = " - ".join([r['cert_lot'] for r in lot_results])
             return f"غير مسجل في النظام / {lots_str} N/A"
         
+        # تنظيف رقم اللوت الداخلي (إزالة .0)
+        def clean_internal_lot(lot_num):
+            if lot_num and isinstance(lot_num, str):
+                # إزالة .0 في النهاية
+                if lot_num.endswith('.0'):
+                    lot_num = lot_num[:-2]
+                # إزالة Lot في البداية لو موجودة
+                lot_num = re.sub(r'^Lot\s+', '', lot_num, flags=re.IGNORECASE)
+                return lot_num.strip()
+            return lot_num
+        
         # تجميع النتائج حسب المورد
         supplier_groups = {}
         not_found_lots = []
@@ -162,7 +175,7 @@ class ERPAgent:
         for result in lot_results:
             if result.get('found'):
                 supplier = result.get('supplier', '').strip()
-                internal_lot = result.get('internal_lot', '').strip()
+                internal_lot = clean_internal_lot(result.get('internal_lot', ''))
                 
                 if supplier not in supplier_groups:
                     supplier_groups[supplier] = []
@@ -173,7 +186,7 @@ class ERPAgent:
         # بناء النص
         parts = []
         
-        # الحالة 1: مورد واحد (مع implicit multi مثل +1, +2)
+        # الحالة 1: مورد واحد
         if len(supplier_groups) == 1:
             supplier = list(supplier_groups.keys())[0]
             lots = supplier_groups[supplier]
@@ -183,26 +196,36 @@ class ERPAgent:
                 lot_text = lots[0]
                 if annotation_hint:
                     lot_text = f"{lot_text} {annotation_hint}"
-                parts.append(f"{supplier} - Lot  {lot_text}")
+                # إزالة كلمة Lot لو موجودة في الاسم
+                supplier_clean = re.sub(r'^Lot\s+', '', supplier, flags=re.IGNORECASE)
+                parts.append(f"{supplier_clean} - {lot_text}")
             else:
                 # لوطين显式 (مثل 2601 و 2602)
-                lots_text = " - Lot  ".join(lots)
-                parts.append(f"{supplier} - Lot {lots_text}")
+                lots_text = " - ".join(lots)
+                supplier_clean = re.sub(r'^Lot\s+', '', supplier, flags=re.IGNORECASE)
+                parts.append(f"{supplier_clean} - {lots_text}")
         
         # الحالة 2: موردين مختلفين
         else:
             for supplier, lots in supplier_groups.items():
+                supplier_clean = re.sub(r'^Lot\s+', '', supplier, flags=re.IGNORECASE)
                 if len(lots) == 1:
-                    parts.append(f"{supplier} - Lot  {lots[0]}")
+                    parts.append(f"{supplier_clean} - {lots[0]}")
                 else:
-                    lots_text = " - Lot  ".join(lots)
-                    parts.append(f"{supplier} - Lot {lots_text}")
+                    lots_text = " - ".join(lots)
+                    parts.append(f"{supplier_clean} - {lots_text}")
         
         # إضافة اللوتات اللي ملقتش
         if not_found_lots:
             parts.append(f"{' - '.join(not_found_lots)} N/A")
         
-        return " | ".join(parts) if len(parts) > 1 else parts[0]
+        result_text = " | ".join(parts) if len(parts) > 1 else parts[0]
+        
+        # تنظيف النهائي: إزالة تكرار Lot
+        result_text = re.sub(r'\bLot\s+Lot\b', 'Lot', result_text, flags=re.IGNORECASE)
+        result_text = re.sub(r'\s+', ' ', result_text)  # إزالة المسافات الزائدة
+        
+        return result_text
     
     def process_certificate(self, extraction_result):
         cert_number = extraction_result.get('certification_number', 'UNKNOWN')

@@ -18,21 +18,35 @@ class ExtractLotAgent:
         except:
             return {}
     
+    # ExtractLotAgent.py - تصحيح استخراج الأرقام
     def extract_lot_numbers(self, lot_string):
         """
         استخراج كل أرقام اللوت من النص
-        تدعم: 139385, 139912/139913, 139912-139913, 139865/2, SFP228, إلخ
         """
         lot_string = lot_string.strip()
         logger.info(f"Parsing lot string: '{lot_string}'")
         
-        # تنظيف النص من علامات التنصيص الغريبة
+        # تنظيف النص
         lot_string = lot_string.replace("'", "").replace('"', '').replace('`', '')
         
-        # النمط 1: رقمين مفصولين بـ / (مثال: 139912/139913)
+        # النمط 1: رقم-عدد (مثال: 139921-3 أو 139921/3) → implicit multi
+        match = re.match(r'^(\d{5,6})[\/\-](\d{1,2})$', lot_string)
+        if match:
+            base_lot = match.group(1)
+            count = int(match.group(2))
+            if 2 <= count <= 10:  # implicit multi لو العدد من 2 لـ 10
+                logger.info(f"Found implicit multi: base={base_lot}, count={count}")
+                return {
+                    "type": "implicit_multi",
+                    "base_lot": base_lot,
+                    "lots": [base_lot],
+                    "count": count,
+                    "annotation_hint": f"+{count-1}"
+                }
+        
+        # النمط 2: رقمين مفصولين بـ / (مثال: 139912/139913)
         if '/' in lot_string:
             parts = lot_string.split('/')
-            # لو الطرفين أرقام وطولهم 5-6 أرقام، يبقى دول لوطين منفصلين
             if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
                 if 5 <= len(parts[0]) <= 6 and 5 <= len(parts[1]) <= 6:
                     logger.info(f"Found explicit multi (slash): {parts}")
@@ -42,21 +56,10 @@ class ExtractLotAgent:
                         "count": 2,
                         "annotation_hint": None
                     }
-                # لو الطرف الثاني رقم صغير (1-9)، يبقى implicit multi
-                elif 5 <= len(parts[0]) <= 6 and 1 <= len(parts[1]) <= 2 and int(parts[1]) <= 10:
-                    logger.info(f"Found implicit multi: base={parts[0]}, count={parts[1]}")
-                    return {
-                        "type": "implicit_multi",
-                        "base_lot": parts[0],
-                        "lots": [parts[0]],
-                        "count": int(parts[1]),
-                        "annotation_hint": f"+{int(parts[1])-1}"
-                    }
         
-        # النمط 2: رقمين مفصولين بـ - (مثال: 139859-139860)
+        # النمط 3: رقمين مفصولين بـ - (مثال: 139859-139860)
         if '-' in lot_string:
             parts = lot_string.split('-')
-            # لو كل الأجزاء أرقام وطول كل جزء 5-6 أرقام
             if all(p.isdigit() and 5 <= len(p) <= 6 for p in parts):
                 logger.info(f"Found explicit multi (dash): {parts}")
                 return {
@@ -66,8 +69,7 @@ class ExtractLotAgent:
                     "annotation_hint": None
                 }
         
-        # النمط 3: رقم واحد (مثال: 139385, 91191, SFP228, إلخ)
-        # ندور على أي رقم 5-6 أرقام
+        # النمط 4: رقم واحد
         number_match = re.search(r'(\d{5,6})', lot_string)
         if number_match:
             lot_num = number_match.group(1)
@@ -75,16 +77,6 @@ class ExtractLotAgent:
             return {
                 "type": "single",
                 "lots": [lot_num],
-                "count": 1,
-                "annotation_hint": None
-            }
-        
-        # النمط 4: أحرف وأرقام (مثل SFP228, DH956-TX/2025)
-        if re.match(r'^[A-Za-z0-9\-\/]+$', lot_string):
-            logger.info(f"Found alphanumeric lot: {lot_string}")
-            return {
-                "type": "single",
-                "lots": [lot_string],
                 "count": 1,
                 "annotation_hint": None
             }
