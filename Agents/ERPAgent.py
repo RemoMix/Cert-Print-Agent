@@ -115,6 +115,7 @@ class ERPAgent:
         logger.warning(f"Lot {cert_lot_number} not found in ERP")
         return result
     
+    # ERPAgent.py - التأكد من البحث عن كل الأرقام
     def search_multiple_lots(self, extraction_result):
         """البحث عن كل الأرقام"""
         lot_numbers = extraction_result.get('lot_numbers', [])
@@ -127,6 +128,7 @@ class ERPAgent:
         results = []
         
         for i, lot_num in enumerate(lot_numbers):
+            logger.info(f"Searching for lot {i+1}/{len(lot_numbers)}: {lot_num}")
             result = self.search_lot(lot_num)
             
             # إضافة معلومات إضافية من lot_info
@@ -137,6 +139,7 @@ class ERPAgent:
                 result['count'] = info.get('count', 1)
             
             results.append(result)
+            logger.info(f"Result for {lot_num}: found={result['found']}, supplier={result.get('supplier')}, internal_lot={result.get('internal_lot')}")
         
         return results
     
@@ -180,20 +183,20 @@ class ERPAgent:
                 lot_text = lots[0]
                 if annotation_hint:
                     lot_text = f"{lot_text} {annotation_hint}"
-                parts.append(f"{supplier} - لوط {lot_text}")
+                parts.append(f"{supplier} - Lot  {lot_text}")
             else:
                 # لوطين显式 (مثل 2601 و 2602)
-                lots_text = " - لوط ".join(lots)
-                parts.append(f"{supplier} - لوط {lots_text}")
+                lots_text = " - Lot  ".join(lots)
+                parts.append(f"{supplier} - Lot {lots_text}")
         
         # الحالة 2: موردين مختلفين
         else:
             for supplier, lots in supplier_groups.items():
                 if len(lots) == 1:
-                    parts.append(f"{supplier} - لوط {lots[0]}")
+                    parts.append(f"{supplier} - Lot  {lots[0]}")
                 else:
-                    lots_text = " - لوط ".join(lots)
-                    parts.append(f"{supplier} - لوط {lots_text}")
+                    lots_text = " - Lot  ".join(lots)
+                    parts.append(f"{supplier} - Lot {lots_text}")
         
         # إضافة اللوتات اللي ملقتش
         if not_found_lots:

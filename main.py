@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from Agents.LoggingAgent import get_logger
 from Agents.OutlookAgent import OutlookAgent
-from Agents.ExtractLotAgent import ExtractLotAgent  # ✅ استخدام النسخة الجديدة
+from Agents.ExtractLotAgent import ExtractLotAgent  
 from Agents.ERPAgent import ERPAgent
 from Agents.AnnotatePrintAgent import AnnotatePrintAgent
 
@@ -115,33 +115,33 @@ class CertPrintOrchestrator:
                     dst = os.path.join(source_cert, timestamp + pdf_file)
                 
                 shutil.move(src, dst)
-                self.logger.info(f"تم نقل {pdf_file} للأرشيف")
+                self.logger.info(f"{pdf_file} Transfered to archive")
                 
         except Exception as e:
-            self.logger.error(f"خطأ في الأرشفة: {e}")
+            self.logger.error(f"Archive Error: {e}")
     
     def check_outlook(self):
         """فحص الإيميل وجلب الشهادات الجديدة"""
         try:
-            self.logger.info("\n--- فحص الإيميل ---")
+            self.logger.info("\n--- Check Email ---")
             new_certs = self.outlook_agent.run()
             
             if new_certs:
-                self.logger.info(f"✓ تم جلب {len(new_certs)} شهادة جديدة من الإيميل")
+                self.logger.info(f"✓  {len(new_certs)} New Certificates from Email")
                 return True
             else:
-                self.logger.info("مفيش إيميلات جديدة")
+                self.logger.info("No New Emails")
                 return False
                 
         except Exception as e:
-            self.logger.error(f"خطأ في فحص الإيميل: {e}")
+            self.logger.error(f"Check Email Error: {e}")
             return False
     
     def run_continuous(self):
         """التشغيل المستمر - شغال على طول"""
         self.logger.info("\n" + "="*60)
         self.logger.info("Cert-Print-Agent - نظام المراقبة المستمر")
-        self.logger.info("الضغط على Ctrl+C للإيقاف")
+        self.logger.info(" Press Ctrl+C For Stopping")
         self.logger.info("="*60)
         
         cycle_count = 0
@@ -166,25 +166,25 @@ class CertPrintOrchestrator:
                 wait_time = max(0, (self.check_interval * 60) - elapsed)
                 
                 if wait_time > 0 and self.running:
-                    self.logger.info(f"\nانتظار {int(wait_time)} ثانية للدورة التالية...")
+                    self.logger.info(f"\n Waiting {int(wait_time)} second for next cycle...")
                     time.sleep(wait_time)
                 
             except KeyboardInterrupt:
-                self.logger.info("\nتم إيقاف النظام بواسطة المستخدم")
+                self.logger.info("\n Stopped By User")
                 self.running = False
                 break
             except Exception as e:
-                self.logger.error(f"خطأ في الدورة: {e}")
+                self.logger.error(f"Error in cycle: {e}")
                 time.sleep(60)  # انتظر دقيقة لو حصل خطأ
         
         self.logger.info("\n" + "="*60)
-        self.logger.info("النظام توقف")
+        self.logger.info("System stoped")
         self.logger.info("="*60)
     
     def run_once(self):
         """تشغيل دورة واحدة فقط"""
         self.logger.info("\n" + "="*60)
-        self.logger.info("تشغيل دورة واحدة")
+        self.logger.info("Start one cycle")
         self.logger.info("="*60)
         
         self.check_outlook()
